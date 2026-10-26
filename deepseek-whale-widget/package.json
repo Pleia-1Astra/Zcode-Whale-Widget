@@ -1,0 +1,14 @@
+{
+  "name": "deepseek-whale-widget",
+  "version": "0.4.2-zcode.16",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek Balance Whale Widget for ZCode: MCP App panel + transparent desktop overlay.",
+  "scripts": {
+    "test": "node --test",
+    "setup": "node lib/overlay-cli.mjs setup",
+    "start": "node lib/overlay-cli.mjs start",
+    "status": "node lib/overlay-cli.mjs status",
+    "stop": "node lib/overlay-cli.mjs stop"
+  }
+}

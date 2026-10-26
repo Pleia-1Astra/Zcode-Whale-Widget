@@ -1,0 +1,18 @@
+{
+  "description": "DeepSeek Whale: start the local host and transparent overlay at session start.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "process",
+            "command": "${user_config.zcode_exe}",
+            "args": ["${ZCODE_PLUGIN_ROOT}/lib/autostart.mjs"],
+            "env": { "ELECTRON_RUN_AS_NODE": "1" },
+            "timeoutMs": 25000
+          }
+        ]
+      }
+    ]
+  }
+}

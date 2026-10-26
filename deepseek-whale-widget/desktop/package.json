@@ -1,0 +1,7 @@
+{
+  "name": "deepseek-whale-widget-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Transparent always-on-top overlay window that hosts the DeepSeek whale widget (deepseek-whale-widget).",
+  "main": "main.cjs"
+}

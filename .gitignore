@@ -1,0 +1,41 @@
+# Dependencies and generated output
+node_modules/
+dist/
+build/
+coverage/
+*.log
+*.tmp
+.tmp_*
+*.zip
+*.exe
+*.part-*
+
+# Local editor/session data
+.zcode/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets and machine-specific state
+.env
+.env.*
+!.env.example
+*credentials*.json
+.credentials.yaml
+*.pem
+*.key
+*.p12
+*.pfx
+host.json
+overlay.json
+overlay-window-state.json
+overlay-preference.json
+overlay-profile-*/
+desktop-runtime/
+electron-downloads/
+app-snapshots/
+.dsh/
+.dshw-*
+api-models.json
+settings.local.json

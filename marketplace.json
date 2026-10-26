@@ -1,0 +1,15 @@
+{
+  "name": "dev-deepseek-whale-widget",
+  "plugins": [
+    {
+      "name": "deepseek-whale-widget",
+      "source": "./deepseek-whale-widget",
+      "version": "0.4.2-zcode.16",
+      "description": "DeepSeek Balance Whale Widget for ZCode: transparent desktop overlay that follows the main window, plus the MCP App panel.",
+      "displayName": "DeepSeek Whale Widget",
+      "displayName_i18n": { "zh-CN": "DeepSeek Whale Widget" },
+      "description_i18n": { "zh-CN": "在 ZCode 主窗口右下角显示透明、跟随主窗口层级和位置的小鲸鱼；不覆盖其他应用，支持异常退出恢复，保留原项目界面、交互、余额记账、泡泡、音效与资源管理。" },
+      "category": "productivity"
+    }
+  ]
+}

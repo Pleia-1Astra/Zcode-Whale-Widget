@@ -1,0 +1,36 @@
+{
+  "name": "deepseek-whale-widget",
+  "version": "0.4.2-zcode.16",
+  "description": "DeepSeek Balance Whale Widget: MCP App panel plus transparent desktop overlay that follows the ZCode main window.",
+  "author": { "name": "ZCode community adaptation" },
+  "license": "MIT",
+  "skills": "./skills",
+  "commands": "./commands",
+  "hooks": "hooks/hooks.json",
+  "mcpServers": {
+    "deepseek-whale-widget": {
+      "type": "stdio",
+      "command": "${user_config.zcode_exe}",
+      "args": ["${ZCODE_PLUGIN_ROOT}/lib/mcp-server.mjs"],
+      "env": { "ELECTRON_RUN_AS_NODE": "1" }
+    }
+  },
+  "userConfig": {
+    "zcode_exe": {
+      "type": "file",
+      "title": "ZCode executable",
+      "description": "Select this computer's ZCode.exe. It is used as the Node runtime for the MCP server and hook scripts."
+    }
+  },
+  "ui": {
+    "surfaces": [
+      {
+        "id": "whale-panel",
+        "title": "DeepSeek Whale",
+        "server": "deepseek-whale-widget",
+        "resourceUri": "ui://deepseek-whale-widget/whale-panel",
+        "availability": "session"
+      }
+    ]
+  }
+}
