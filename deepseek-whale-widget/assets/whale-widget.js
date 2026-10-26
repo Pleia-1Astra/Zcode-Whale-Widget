@@ -22086,7 +22086,7 @@ function isWhaleHit(e) {
     var lx = (e.clientX - r.left) / r.width * 610
     var ly = (e.clientY - r.top) / r.height * 610
     if (lx < 0 || ly < 0 || lx >= 610 || ly >= 610) return false
-    if (state.flip) lx = 610 - lx
+    if (state.flip) lx = 609 - Math.floor(lx)
     var data
     try {
       data = hitCanvas.getContext('2d').getImageData(Math.floor(lx), Math.floor(ly), 1, 1).data
@@ -22101,6 +22101,16 @@ function isWhaleHit(e) {
   } catch (err) {
     return false
   }
+}
+window.__dshWhaleHitTest = function (x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y) || dshwOverlayHidden()) return false
+  try {
+    var cs = window.getComputedStyle(img)
+    var rs = window.getComputedStyle(root)
+    if (cs.display === 'none' || cs.visibility !== 'visible' || Number(cs.opacity) === 0 ||
+        rs.display === 'none' || rs.visibility !== 'visible' || Number(rs.opacity) === 0) return false
+    return isWhaleHit({ clientX: x, clientY: y })
+  } catch (err) { return false }
 }
 function onDocPointerDown(e) {
   if (e.target && e.target.closest) {

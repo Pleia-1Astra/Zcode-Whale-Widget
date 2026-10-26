@@ -12,6 +12,7 @@ const path = require('node:path')
 const fs = require('node:fs')
 const os = require('node:os')
 const { overlayBoundsForHost, physicalToDip, rectsClose } = require('./window-bounds.cjs')
+const { createInteractionGuard } = require('./interaction-guard.cjs')
 
 const PORT = Number(process.env.DEEPSEEK_WHALE_PORT) || 3080
 const TARGET_URL = 'http://127.0.0.1:' + PORT + '/?overlay=1'
@@ -44,12 +45,14 @@ let win = null
 let follower = null
 let pageReady = false
 let overlayShown = false
-let interactive = false
 let keyboardFocus = false
 let lastFollowerMsg = null
 let lastHostRect = null
 let quitting = false
 let visibilityReason = 'starting'
+const guard = createInteractionGuard()
+// 页面用几何纪元丢弃跨屏、改尺寸前的命中迟滞。
+let geometryEpoch = 0
 const STATE_FILE = path.join(DATA_DIR, 'overlay-window-state.json')
 function recordWindowState(event) {
   try {
@@ -59,6 +62,7 @@ function recordWindowState(event) {
     fs.writeFileSync(STATE_FILE, JSON.stringify({
       pid: process.pid, at: new Date().toISOString(), event, quitting, reason: visibilityReason,
       window: win && !win.isDestroyed() ? { shown: overlayShown, nativeVisible: win.isVisible(), opacity: win.getOpacity(), bounds, offscreen, focused: win.isFocused() } : null,
+      input: { ...guard.snapshot(), geometryEpoch },
       followerPid: follower && follower.pid, lastFollowerMsg,
     }))
   } catch (err) {}
@@ -376,14 +380,17 @@ function hideOverlay(reason) {
   visibilityReason = reason
   if (!win || win.isDestroyed()) return
   if (overlayShown) {
+    const now = Date.now()
     overlayShown = false
-    interactive = false
+    // 隐藏即清空期望值、租约与退避：隐藏期间不允许任何接管被继承下来。
+    guard.reset(now)
     try {
       // 顺序：先交还焦点/前台（此时窗口仍可见，handback 才有意义），再隐身
       releaseKeyboardFocusNow()
-      win.setIgnoreMouseEvents(true)
       win.setOpacity(0)
-    } catch (err) {}
+    } catch (_err) {}
+    // 只有当原生调用真的成功，guard 才认为已经交还；否则下一个 tick 会继续重试。
+    guard.noteApplied(false, applyNative(false), now)
     log('hidden', reason)
   }
   sendWindowState()
@@ -392,6 +399,7 @@ function hideOverlay(reason) {
 function showOverlay() {
   if (!win || win.isDestroyed()) return
   if (!pageReady) return // 页面未就绪前显示只会是一帧空透明画面
+  const wasShown = overlayShown
   try {
     if (!win.isVisible()) {
       // 窗口生命周期里唯一一次真正的 show 过渡（实测无输入问题）
@@ -403,9 +411,11 @@ function showOverlay() {
     overlayShown = true
     visibilityReason = 'host-visible'
     win.setOpacity(1)
-    win.setIgnoreMouseEvents(!interactive, { forward: !interactive })
     kickPresentation('show')
   } catch (err) {}
+  // 显隐转换必须重新对齐一次原生状态（页面在隐藏期间已把期望值降为穿透）；
+  // 其余跟随帧只在失配或需要复述时才动原生接口，避免每 40ms 都调一次。
+  reconcile(Date.now(), !wasShown)
   sendWindowState()
 }
 
@@ -434,6 +444,8 @@ function applyHostRect(dipRect) {
   if (!rectsClose(current, bounds, 1)) {
     try {
       win.setBounds(bounds)
+      geometryEpoch++
+      applyInteractive(false, true)
       log('bounds', JSON.stringify(bounds))
     } catch (err) {
       log('bounds-failed', String((err && err.message) || err))
@@ -464,17 +476,37 @@ function applyFollowerMessage(msg) {
 }
 
 // ---------- 鼠标接管 / 键盘焦点 ----------
+function applyNative(want) {
+  try {
+    win.setIgnoreMouseEvents(!want, { forward: !want })
+    return true
+  } catch (err) {
+    const failures = guard.snapshot().failures
+    if (failures === 0 || (failures & (failures - 1)) === 0) {
+      log('interactive-failed', String(want), String(err && err.message || err))
+    }
+    return false
+  }
+}
+
+function reconcile(now, force, decision) {
+  if (!win || win.isDestroyed()) return
+  const action = decision || (force ? guard.force(now) : guard.tick(now))
+  if (action.action !== 'apply') return
+  const before = guard.snapshot()
+  const ok = applyNative(action.want)
+  guard.noteApplied(action.want, ok, now)
+  if (ok && (before.applied !== action.want || !before.verified)) {
+    log('interactive', String(action.want), action.reason)
+  }
+}
+
 function applyInteractive(next, force) {
   if (!win || win.isDestroyed()) return
-  if (!overlayShown && next) return
-  const want = !!next
-  if (want === interactive && !force) return
-  interactive = want
-  try {
-    if (want) win.setIgnoreMouseEvents(false)
-    else win.setIgnoreMouseEvents(true, { forward: true })
-  } catch (err) {}
-  log('interactive', String(want))
+  const now = Date.now()
+  const want = !!next && overlayShown && pageReady
+  const decision = guard.request(want, now)
+  reconcile(now, force, force ? guard.force(now) : decision)
 }
 
 ipcMain.on('deepseek-whale:interactive', (_event, value) => applyInteractive(value))
@@ -513,7 +545,7 @@ ipcMain.on('deepseek-whale:keyboard-focus', (_event, value) => {
 // 点击落在浮层 UI 之外：收起菜单后把这次点击原位置重放给 ZCode
 ipcMain.on('deepseek-whale:dismiss-replay', () => {
   if (!win || win.isDestroyed()) return
-  if (interactive) applyInteractive(false)
+  applyInteractive(false, true)
   followerCommand('replay-click')
   log('dismiss-replay')
 })
@@ -526,11 +558,18 @@ ipcMain.on('deepseek-whale:quit', () => {
 // 指针位置低频兜底：穿透时 forward 的 pointermove 与接管时的真实事件在个别
 // 场景会断流（原生下拉、窗口显隐、焦点切换），断了就再也点不到鲸鱼。
 setInterval(() => {
-  if (!overlayShown || !win || win.isDestroyed()) return
+  if (!win || win.isDestroyed()) return
+  reconcile(Date.now())
+  if (!overlayShown || !pageReady) return
   try {
     const p = screen.getCursorScreenPoint()
     const b = win.getContentBounds()
-    win.webContents.send('deepseek-whale:cursor', { x: Math.round(p.x - b.x), y: Math.round(p.y - b.y) })
+    const zoom = win.webContents.getZoomFactor()
+    win.webContents.send('deepseek-whale:cursor', {
+      x: (p.x - b.x) / zoom, y: (p.y - b.y) / zoom,
+      geometryEpoch, interactive: guard.snapshot().applied,
+      verified: guard.snapshot().verified,
+    })
   } catch (err) {}
 }, 200)
 

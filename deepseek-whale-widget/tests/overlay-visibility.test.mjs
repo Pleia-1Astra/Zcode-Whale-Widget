@@ -4,6 +4,8 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
+import { createRequire } from 'node:module'
+const require = createRequire(import.meta.url)
 
 const source = fs.readFileSync(new URL('../desktop/main.cjs', import.meta.url), 'utf8')
 const followerSource = fs.readFileSync(new URL('../desktop/follow-window.ps1', import.meta.url), 'utf8')
@@ -13,6 +15,8 @@ function loadOverlay() {
   const ipc = new EventEmitter()
   const app = new EventEmitter()
   let quits = 0
+  let now = 10000
+  const intervals = new Map()
   Object.assign(app, {
     commandLine: { appendSwitch() {} },
     requestSingleInstanceLock: () => true,
@@ -35,6 +39,7 @@ function loadOverlay() {
         setWindowOpenHandler() {},
         invalidate() {},
         send: (channel, state) => this.messages.push({ channel, state }),
+        getZoomFactor: () => this.zoom || 1,
       })
     }
     loadURL() {}
@@ -43,7 +48,12 @@ function loadOverlay() {
     isFocused() { return this.focused }
     showInactive() { this.visible = true }
     setOpacity(value) { this.opacity = value }
-    setIgnoreMouseEvents(value) { this.ignored = value }
+    setIgnoreMouseEvents(value) {
+      this.nativeCalls = (this.nativeCalls || 0) + 1
+      if (this.failNative) throw new Error('native failure')
+      this.ignored = value
+    }
+    getContentBounds() { return this.bounds }
     setFocusable(value) { this.focusable = value }
     focus() { this.focused = true }
     setAlwaysOnTop(value) { this.topmost = value }
@@ -59,6 +69,7 @@ function loadOverlay() {
         screen: {
           getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1200, height: 800 } }),
           screenToDipRect: (_window, rect) => rect,
+          getCursorScreenPoint: () => ({ x: -1200, y: 500 }),
         },
         shell: {},
       }
@@ -66,24 +77,84 @@ function loadOverlay() {
       if (name === 'node:path') return path
       if (name === 'node:os') return { homedir: () => '/test-home' }
       if (name === 'node:fs') return { readFileSync() { throw new Error('no running host') } }
+      if (name === './interaction-guard.cjs') return require('../desktop/interaction-guard.cjs')
       if (name === './window-bounds.cjs') return {
         overlayBoundsForHost: (rect) => rect,
         physicalToDip: (rect) => rect,
-        rectsClose: () => true,
+        rectsClose: (a, b) => ['x', 'y', 'width', 'height'].every(k => a[k] === b[k]),
       }
       throw new Error('unexpected module: ' + name)
     },
     __dirname: '/overlay',
     process: { env: { DEEPSEEK_WHALE_OVERLAY_LOG: '0' }, platform: 'linux' },
-    setInterval() { return { unref() {} } },
+    Date: class extends Date { static now() { return now } },
+    setInterval(callback, ms) { intervals.set(ms, callback); return { unref() {} } },
     setTimeout(callback) { timers.push(callback); return { unref() {} } },
     clearInterval() {},
   }
   vm.runInNewContext(source + '\ncreateWindow(); pageReady = true; globalThis.overlay = win; globalThis.follow = applyFollowerMessage;', sandbox)
   const message = { x: 0, y: 0, w: 1200, h: 800, show: true }
   sandbox.follow(message)
-  return { window: sandbox.overlay, follow: sandbox.follow, ipc, timers, quits: () => quits, message }
+  return { window: sandbox.overlay, follow: sandbox.follow, ipc, timers, quits: () => quits, message,
+    tick(ms = 200) { now += ms; intervals.get(200)() },
+  }
 }
+
+test('cursor clock corrects native drift and releases an expired renderer lease', () => {
+  const { window, ipc, tick } = loadOverlay()
+  ipc.emit('deepseek-whale:interactive', {}, true)
+  window.ignored = true
+  tick(600)
+  ipc.emit('deepseek-whale:interactive', {}, true)
+  tick(400)
+  assert.equal(window.ignored, false, 'same-value native drift must be corrected')
+  tick(1600)
+  assert.equal(window.ignored, true, 'no renewal must release whole-window capture')
+  ipc.emit('deepseek-whale:interactive', {}, true)
+  assert.equal(window.ignored, false, 'a recovered renderer can acquire again')
+})
+
+test('failed native capture is not acknowledged and retries with bounded backoff', () => {
+  const { window, ipc, tick } = loadOverlay()
+  window.failNative = true
+  ipc.emit('deepseek-whale:interactive', {}, true)
+  const calls = window.nativeCalls
+  tick(200)
+  ipc.emit('deepseek-whale:interactive', {}, true)
+  assert.equal(window.nativeCalls, calls, 'renewal must not bypass retry backoff')
+  assert.equal(window.messages.at(-1).state.verified, false)
+  assert.equal(window.messages.at(-1).state.interactive, false)
+  window.failNative = false
+  tick(200)
+  assert.equal(window.ignored, false)
+  assert.equal(window.messages.at(-1).state.verified, true)
+})
+
+test('hidden release retries without cursor messages and rejects capture requests', () => {
+  const { window, ipc, tick, follow } = loadOverlay()
+  ipc.emit('deepseek-whale:interactive', {}, true)
+  window.failNative = true
+  follow({ show: false })
+  ipc.emit('deepseek-whale:interactive', {}, true)
+  window.failNative = false
+  tick(400)
+  assert.equal(window.ignored, true)
+  ipc.emit('deepseek-whale:interactive', {}, true)
+  assert.equal(window.ignored, true)
+})
+
+test('negative-screen geometry and zoom are converted to CSS cursor coordinates', () => {
+  const { window, follow, ipc, tick } = loadOverlay()
+  ipc.emit('deepseek-whale:interactive', {}, true)
+  window.zoom = 2
+  follow({ x: -1600, y: 300, w: 1200, h: 800, show: true })
+  assert.equal(window.ignored, true, 'moving invalidates previous capture')
+  tick()
+  const pt = window.messages.at(-1).state
+  assert.equal(pt.x, 200)
+  assert.equal(pt.y, 100)
+  assert.equal(pt.geometryEpoch, 1)
+})
 
 test('renderer navigation releases obsolete input capture before the new page loads', () => {
   const { window, ipc } = loadOverlay()

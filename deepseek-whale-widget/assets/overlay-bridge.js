@@ -12,8 +12,12 @@
   var doc = document
   var lastPointer = null
   var lastHitPoint = null
+  var lastHitAt = 0
   var interactive = false
   var lastInteractiveOnAt = 0
+  var lastInteractiveSentAt = -Infinity
+  var acknowledgedInteractive = null
+  var geometryEpoch = null
   var keyboardFocus = false
   var visible = true
 
@@ -94,14 +98,17 @@
     if (!bridge || typeof bridge.setInteractive !== 'function') return
     if (!visible && v) return
     var want = !!v
-    if (want === interactive && !force) return
-    // 去抖：指针擦过鲸鱼透明边缘时接管/穿透会来回抖动；关闭方向至少保持 120ms，
-    // 但「收起 UI / 失焦」这类刻意转换必须立刻生效。
-    if (!force && !want && interactive && Date.now() - lastInteractiveOnAt < 120) return
-    if (want) lastInteractiveOnAt = Date.now()
-    interactive = want
+    var now = Date.now()
+    var changed = want !== interactive
+    // 接管每 600ms 续租；穿透每秒重申。回执失配也只能由下一次光标采样触发，避免 IPC 回环。
+    if (!changed && !force && acknowledgedInteractive === want && now - lastInteractiveSentAt < (want ? 600 : 1000)) return
+    if (!changed && !force && acknowledgedInteractive !== want && now - lastInteractiveSentAt < 200) return
+    if (!force && !want && interactive && now - lastInteractiveOnAt < 120) return
     try {
       bridge.setInteractive(want)
+      if (changed && want) lastInteractiveOnAt = now
+      interactive = want
+      lastInteractiveSentAt = now
     } catch (err) {}
   }
 
@@ -126,13 +133,14 @@
     }
     if (hit) {
       lastHitPoint = { x: lastPointer.x, y: lastPointer.y }
+      lastHitAt = Date.now()
       return true
     }
-    // 空间迟滞：刚离开鲸鱼边缘 8px 内保持接管，避免边缘闪
+    // 边缘 8px 内最多保持 300ms；静止在透明点时不能无限续租。
     if (lastHitPoint) {
       var dx = lastPointer.x - lastHitPoint.x
       var dy = lastPointer.y - lastHitPoint.y
-      if (dx * dx + dy * dy < 64) return true
+      if (dx * dx + dy * dy < 64 && Date.now() - lastHitAt < 300) return true
     }
     lastHitPoint = null
     return false
@@ -188,12 +196,22 @@
     }
   }, true)
   doc.addEventListener('pointerup', sync, true)
-  window.addEventListener('resize', sync)
+  window.addEventListener('resize', function () {
+    lastPointer = null
+    lastHitPoint = null
+    setInteractive(false, true)
+  })
 
   if (typeof bridge.onCursor === 'function') {
     try {
       bridge.onCursor(function (pt) {
-        if (pt) track(pt.x, pt.y)
+        if (!pt) return
+        if (pt.geometryEpoch !== geometryEpoch) {
+          geometryEpoch = pt.geometryEpoch
+          lastHitPoint = null
+        }
+        if (typeof pt.interactive === 'boolean') acknowledgedInteractive = pt.verified === false ? null : pt.interactive
+        track(pt.x, pt.y)
       })
     } catch (err) {}
   }
@@ -204,6 +222,11 @@
         var wasVisible = visible
         if (state && typeof state.visible === 'boolean') visible = state.visible
         if (state && state.blur) teardown()
+        if (!visible || !wasVisible) {
+          lastPointer = null
+          lastHitPoint = null
+          acknowledgedInteractive = null
+        }
         if (!visible) {
           setInteractive(false, true)
           pauseWhaleRequests()

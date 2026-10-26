@@ -9,6 +9,16 @@
 
 同时保留侧栏 **MCP App 面板**作为备用/诊断入口。
 
+## 0.4.2-zcode.17 点击失效修复
+
+- 接通与页面拖动共用的 alpha 命中兜底，修正翻转图像首列像素越界；透明区仍穿透。
+- 200ms 光标采样附带原生接管回执，页面每 600ms 续租；原生状态每秒重新应用，丢失消息与同值失步可自行恢复。
+- 原生调用失败不再记为成功，采用 250ms 起、最高 2s 的退避重试；页面停止续租后 1.5s 到期，下次 200ms 检查主动交还穿透（原生 API 可用时）。
+- 跨屏、改尺寸与显隐后清理旧命中状态；边缘迟滞限制为 300ms，避免透明点永久接管。
+- `overlay-window-state.json` 增加 `input` 诊断状态，不含凭据。
+
+源码更新不会热替换已安装副本：在插件市场的“市场源”刷新 `dev-deepseek-whale-widget`，再在“个人”更新插件到 `.17`；保持原启用状态，在新任务试用。测试结果与限制见 [本版验证记录](VALIDATION-0.4.2-zcode.17.md)。
+
 ## 架构
 
 ```text
@@ -44,7 +54,7 @@ HTTP 宿主 (lib/server.mjs)
 ## 目录
 
 ```text
-.zcode-plugin/plugin.json   清单（version 0.4.2-zcode.16，hooks，MCP，ui.surfaces）
+.zcode-plugin/plugin.json   清单（version 0.4.2-zcode.17，hooks，MCP，ui.surfaces）
 hooks/hooks.json            SessionStart（当前宿主不支持 SessionEnd）
 lib/index.js                原项目宿主逻辑（本移植保留上游行为；仅按需做最小适配，见文末「与上游的差异」）
 lib/accounting.mjs          原项目记账内核（受保护，字节不变）

@@ -13,7 +13,7 @@ contextBridge.exposeInMainWorld('whaleDesktop', {
   // 点在浮层 UI 之外：页面收起菜单并交还穿透后，请主进程把这次点击重放给 ZCode。
   dismissReplay: () => ipcRenderer.send('deepseek-whale:dismiss-replay'),
   quit: () => ipcRenderer.send('deepseek-whale:quit'),
-  // 主进程低频轮询的真实光标位置（页面坐标），用于指针事件流中断时兜底。
+  // 页面坐标附带几何纪元和原生接管回执；光标静止时也持续发送，用于续租与纠偏。
   onCursor: (callback) => {
     ipcRenderer.on('deepseek-whale:cursor', (_event, pt) => {
       try {

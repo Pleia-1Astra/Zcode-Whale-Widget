@@ -1,6 +1,6 @@
 {
   "name": "deepseek-whale-widget",
-  "version": "0.4.2-zcode.16",
+  "version": "0.4.2-zcode.17",
   "private": true,
   "type": "module",
   "description": "DeepSeek Balance Whale Widget for ZCode: MCP App panel + transparent desktop overlay.",
